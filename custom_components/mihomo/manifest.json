@@ -1,0 +1,10 @@
+{
+    "domain": "mihomo",
+    "name": "mihomo",
+    "codeowners": [
+        "clansty"
+    ],
+    "config_flow": false,
+    "iot_class": "local_polling",
+    "version": "0"
+}
