@@ -1,49 +1,38 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import logging
 
-import aiohttp
-import voluptuous as vol
 import websockets
 
-from homeassistant.components.sensor import PLATFORM_SCHEMA, SensorEntity
-import homeassistant.helpers.config_validation as cv
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
 )
 
+from . import CONF_URI, DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
-
-DOMAIN = "mihomo"
-
-CONF_SENSOR_NAME = "sensor_name"
-CONF_URI = "uri"
-
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_SENSOR_NAME): cv.string,
-        vol.Required(CONF_URI): cv.string,
-    }
-)
 
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    sensor_name = config[CONF_SENSOR_NAME]
-    uri = config[CONF_URI]
+    if discovery_info is None:
+        _LOGGER.warning("No discovery info")
+        return
+
+    uri = hass.data[DOMAIN][CONF_URI]
+    ps_coor = hass.data[DOMAIN]["ps_coor"]
 
     coordinator = MyCoordinator(hass, uri)
     await coordinator.async_config_entry_first_refresh()
     async_add_entities(
         [
-            MyWebSocketSensor(f"{sensor_name}_up", coordinator, "up"),
-            MyWebSocketSensor(f"{sensor_name}_down", coordinator, "down"),
+            MyWebSocketSensor("mihomo_up", coordinator, "up"),
+            MyWebSocketSensor("mihomo_down", coordinator, "down"),
         ]
     )
 
-    ps_coor = ProxyStatusCoordinator(hass, uri)
-    await ps_coor.async_config_entry_first_refresh()
     for proxy in ps_coor.data:
         async_add_entities(
             [
@@ -51,7 +40,10 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
                 DelaySensor(proxy, ps_coor),
             ]
         )
-        if ps_coor.data[proxy]["type"] == "Fallback":
+        if (
+            ps_coor.data[proxy]["type"] == "Fallback"
+            or ps_coor.data[proxy]["type"] == "URLTest"
+        ):
             async_add_entities([FallbackCurrentSensor(proxy, ps_coor)])
 
 
@@ -105,26 +97,6 @@ class MyWebSocketSensor(CoordinatorEntity, SensorEntity):
     @property
     def available(self):
         return bool(self.coordinator.data)
-
-
-class ProxyStatusCoordinator(DataUpdateCoordinator):
-    def __init__(self, hass, uri):
-        super().__init__(
-            hass,
-            _LOGGER,
-            name="Mihomo proxy status",
-            always_update=True,
-            update_interval=timedelta(seconds=15),
-        )
-        self.hass = hass
-        self.uri = f"http://{uri}/proxies"
-
-    async def _async_update_data(self):
-        async with (
-            aiohttp.ClientSession() as session,
-            session.get(self.uri) as response,
-        ):
-            return (await response.json())["proxies"]
 
 
 class LastSpeedTestTimeSensor(CoordinatorEntity, SensorEntity):
