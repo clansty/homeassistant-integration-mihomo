@@ -8,7 +8,6 @@ import voluptuous as vol
 import websockets
 
 from homeassistant.components.sensor import PLATFORM_SCHEMA, SensorEntity
-from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -52,6 +51,8 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
                 DelaySensor(proxy, ps_coor),
             ]
         )
+        if ps_coor.data[proxy]["type"] == "Fallback":
+            async_add_entities([FallbackCurrentSensor(proxy, ps_coor)])
 
 
 class MyCoordinator(DataUpdateCoordinator):
@@ -97,10 +98,13 @@ class MyWebSocketSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = sensor_name
         self.up_down = up_down
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        self._attr_native_value = self.coordinator.data[self.up_down]
-        self.async_write_ha_state()
+    @property
+    def native_value(self):
+        return self.coordinator.data[self.up_down]
+
+    @property
+    def available(self):
+        return bool(self.coordinator.data)
 
 
 class ProxyStatusCoordinator(DataUpdateCoordinator):
@@ -134,20 +138,20 @@ class LastSpeedTestTimeSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{sensor_name}_last_speed_test_time"
         self._attr_name = f"{sensor_name} 上次测速时间"
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
+    @property
+    def native_value(self):
+        history = self.coordinator.data[self.sensor_name]["history"]
+        item = history[-1]
+        return datetime.fromisoformat(item["time"])
+
+    @property
+    def available(self):
         if not self.coordinator.data[self.sensor_name]:
-            return self.set_unavailble()
+            return False
         history = self.coordinator.data[self.sensor_name]["history"]
         if not history:
-            return self.set_unavailble()
-        item = history[-1]
-        self._attr_native_value = datetime.fromisoformat(item["time"])
-        self.async_write_ha_state()
-
-    def set_unavailble(self):
-        self._attr_available = False
-        self.async_write_ha_state()
+            return False
+        return True
 
 
 class DelaySensor(CoordinatorEntity, SensorEntity):
@@ -156,6 +160,7 @@ class DelaySensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     _attr_native_unit_of_measurement = "ms"
     _attr_suggested_unit_of_measurement = "ms"
+    _attr_suggested_display_precision = 0
 
     def __init__(self, sensor_name, coordinator):
         super().__init__(coordinator, context=f"{sensor_name}.history")
@@ -163,19 +168,39 @@ class DelaySensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{sensor_name}_delay"
         self._attr_name = sensor_name
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
+    @property
+    def native_value(self):
+        history = self.coordinator.data[self.sensor_name]["history"]
+        item = history[-1]
+        return item["delay"]
+
+    @property
+    def available(self):
         if not self.coordinator.data[self.sensor_name]:
-            return self.set_unavailble()
+            return False
         history = self.coordinator.data[self.sensor_name]["history"]
         if not history:
-            return self.set_unavailble()
+            return False
         item = history[-1]
-        if not item["delay"]:
-            return self.set_unavailble()
-        self._attr_native_value = item["delay"]
-        self.async_write_ha_state()
+        return bool(item["delay"])
 
-    def set_unavailble(self):
-        self._attr_available = False
-        self.async_write_ha_state()
+
+class FallbackCurrentSensor(CoordinatorEntity, SensorEntity):
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+
+    def __init__(self, sensor_name, coordinator):
+        super().__init__(coordinator, context=f"{sensor_name}.now")
+        self.sensor_name = sensor_name
+        self._attr_unique_id = f"{sensor_name}_current"
+        self._attr_name = f"{sensor_name} 当前选择"
+
+    @property
+    def native_value(self):
+        return self.coordinator.data[self.sensor_name]["now"]
+
+    @property
+    def available(self):
+        if self.coordinator.data[self.sensor_name]:
+            return True
+        return False
