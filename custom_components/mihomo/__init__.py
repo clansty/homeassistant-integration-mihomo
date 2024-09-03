@@ -52,4 +52,4 @@ class ProxyStatusCoordinator(DataUpdateCoordinator):
             aiohttp.ClientSession() as session,
             session.get(self.uri) as response,
         ):
-            return (await response.json())["proxies"]
+            return (await response.json(content_type=None))["proxies"]
